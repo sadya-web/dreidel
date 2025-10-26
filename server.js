@@ -10,7 +10,6 @@ const server = http.createServer(app);
 const io = new Server(server);
 
 const workos = new WorkOS({ apiKey: process.env.WORKOS_API_KEY });
-
 const port = process.env.PORT || 3000;
 
 // Session middleware
@@ -21,7 +20,7 @@ const sessionMiddleware = session({
 });
 app.use(sessionMiddleware);
 
-// Make session available to Socket.IO
+// Make session available in Socket.IO
 io.use((socket, next) => {
   sessionMiddleware(socket.request, {}, next);
 });
@@ -76,11 +75,29 @@ app.get('/auth/session', (req, res) => {
   res.json({ user: req.session.user || null });
 });
 
-// ----------------- MULTIPLAYER SOCKET.IO (TURN-BASED) -----------------
+// ----------------- MULTIPLAYER SOCKET.IO -----------------
 let players = {};
 let pot = 0;
 let turnOrder = [];
 let currentTurnIndex = 0;
+
+function checkWinner() {
+  const activePlayers = Object.values(players).filter(p => p.coins > 0);
+  if (activePlayers.length === 1) return activePlayers[0];
+  return null;
+}
+
+function resetGame() {
+  pot = 0;
+  turnOrder.forEach(id => {
+    if (players[id]) {
+      players[id].coins = 10;
+      pot += 1;
+    }
+  });
+  currentTurnIndex = 0;
+  io.emit('gameState', { players, pot, currentTurn: turnOrder[currentTurnIndex] });
+}
 
 io.on('connection', (socket) => {
   const session = socket.request.session;
@@ -88,24 +105,22 @@ io.on('connection', (socket) => {
 
   const userId = session.user.id;
 
-  // Add player if new
   if (!players[userId]) {
     players[userId] = {
       id: userId,
       name: session.user.name,
-      coins: 10, // starting coins
+      coins: 10,
       socketId: socket.id,
     };
     turnOrder.push(userId);
-    pot += 1; // initial pot contribution
+    pot += 1;
   }
 
-  // Send initial state
   io.emit('gameState', { players, pot, currentTurn: turnOrder[currentTurnIndex] });
 
-  // Spin event
+  // Spin
   socket.on('spin', () => {
-    if (turnOrder[currentTurnIndex] !== userId) return; // not this player's turn
+    if (turnOrder[currentTurnIndex] !== userId) return;
 
     const outcomes = ["Nun", "Gimel", "Hey", "Shin"];
     const result = outcomes[Math.floor(Math.random() * outcomes.length)];
@@ -129,15 +144,27 @@ io.on('connection', (socket) => {
         break;
       case "Nun":
       default:
-        // nothing happens
         break;
     }
 
-    // Move to next turn
-    currentTurnIndex = (currentTurnIndex + 1) % turnOrder.length;
+    // Check for winner
+    const winner = checkWinner();
+    if (winner) {
+      io.emit('gameOver', { winner: winner.name });
+      // Auto reset after 5s
+      setTimeout(() => {
+        resetGame();
+      }, 5000);
+      return;
+    }
 
-    // Broadcast updated state
+    currentTurnIndex = (currentTurnIndex + 1) % turnOrder.length;
     io.emit('gameState', { players, pot, currentTurn: turnOrder[currentTurnIndex], lastSpin: { player: player.name, result } });
+  });
+
+  // Manual restart
+  socket.on('restart', () => {
+    resetGame();
   });
 
   // Disconnect
@@ -147,4 +174,8 @@ io.on('connection', (socket) => {
     if (currentTurnIndex >= turnOrder.length) currentTurnIndex = 0;
     io.emit('gameState', { players, pot, currentTurn: turnOrder[currentTurnIndex] });
   });
+});
+
+server.listen(port, () => {
+  console.log(`Dreidel game running at http://localhost:${port}`);
 });

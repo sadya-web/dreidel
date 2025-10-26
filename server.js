@@ -13,21 +13,20 @@ const workos = new WorkOS({ apiKey: process.env.WORKOS_API_KEY });
 
 const port = process.env.PORT || 3000;
 
-// Session setup
+// Session middleware
 const sessionMiddleware = session({
-  secret: 'super-secret-session-key', // replace with strong secret in prod
+  secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: true,
 });
-
 app.use(sessionMiddleware);
 
-// Make session available in Socket.IO
+// Make session available to Socket.IO
 io.use((socket, next) => {
   sessionMiddleware(socket.request, {}, next);
 });
 
-// Serve static frontend
+// Serve static files
 app.use(express.static('public'));
 
 // ----------------- LOGIN ROUTE -----------------
@@ -36,7 +35,7 @@ app.get('/login', async (req, res) => {
     const authorizationUrl = await workos.sso.getAuthorizationURL({
       clientId: process.env.WORKOS_CLIENT_ID,
       redirectUri: 'https://your-render-app.onrender.com/auth/callback',
-      connection: 'conn_XXXXXXXXXXXXXXXX', // your WorkOS connection ID
+      connection: process.env.WORKOS_CONNECTION_ID,
     });
     res.redirect(authorizationUrl);
   } catch (err) {
@@ -60,7 +59,7 @@ app.get('/auth/callback', async (req, res) => {
       email: profile.profile.email,
     };
 
-    res.redirect('/'); // redirect to game lobby
+    res.redirect('/');
   } catch (err) {
     console.error('Callback Error:', err);
     res.status(500).send('Callback Error: ' + err.message);
@@ -69,9 +68,12 @@ app.get('/auth/callback', async (req, res) => {
 
 // ----------------- LOGOUT ROUTE -----------------
 app.get('/logout', (req, res) => {
-  req.session.destroy(() => {
-    res.redirect('/');
-  });
+  req.session.destroy(() => res.redirect('/'));
+});
+
+// ----------------- SESSION INFO -----------------
+app.get('/auth/session', (req, res) => {
+  res.json({ user: req.session.user || null });
 });
 
 // ----------------- MULTIPLAYER SOCKET.IO -----------------
@@ -79,9 +81,7 @@ let players = {};
 
 io.on('connection', (socket) => {
   const session = socket.request.session;
-  if (!session.user) {
-    return socket.disconnect(true); // only allow logged-in users
-  }
+  if (!session.user) return socket.disconnect(true);
 
   const userId = session.user.id;
   players[userId] = {
@@ -90,7 +90,7 @@ io.on('connection', (socket) => {
     socketId: socket.id,
   };
 
-  // Notify everyone of updated player list
+  // Broadcast updated player list
   io.emit('playersUpdate', Object.values(players));
 
   // Handle Dreidel spins
@@ -107,8 +107,6 @@ io.on('connection', (socket) => {
   });
 });
 
-// Start server
 server.listen(port, () => {
   console.log(`Dreidel game running at http://localhost:${port}`);
 });
-

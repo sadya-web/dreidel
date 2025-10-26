@@ -76,38 +76,75 @@ app.get('/auth/session', (req, res) => {
   res.json({ user: req.session.user || null });
 });
 
-// ----------------- MULTIPLAYER SOCKET.IO -----------------
+// ----------------- MULTIPLAYER SOCKET.IO (TURN-BASED) -----------------
 let players = {};
+let pot = 0;
+let turnOrder = [];
+let currentTurnIndex = 0;
 
 io.on('connection', (socket) => {
   const session = socket.request.session;
   if (!session.user) return socket.disconnect(true);
 
   const userId = session.user.id;
-  players[userId] = {
-    id: userId,
-    name: session.user.name,
-    socketId: socket.id,
-  };
 
-  // Broadcast updated player list
-  io.emit('playersUpdate', Object.values(players));
+  // Add player if new
+  if (!players[userId]) {
+    players[userId] = {
+      id: userId,
+      name: session.user.name,
+      coins: 10, // starting coins
+      socketId: socket.id,
+    };
+    turnOrder.push(userId);
+    pot += 1; // initial pot contribution
+  }
 
-  // Handle Dreidel spins
+  // Send initial state
+  io.emit('gameState', { players, pot, currentTurn: turnOrder[currentTurnIndex] });
+
+  // Spin event
   socket.on('spin', () => {
+    if (turnOrder[currentTurnIndex] !== userId) return; // not this player's turn
+
     const outcomes = ["Nun", "Gimel", "Hey", "Shin"];
     const result = outcomes[Math.floor(Math.random() * outcomes.length)];
-    io.emit('spinResult', { player: session.user.name, result });
+    const player = players[userId];
+
+    switch (result) {
+      case "Gimel":
+        player.coins += pot;
+        pot = 0;
+        break;
+      case "Hey":
+        const half = Math.ceil(pot / 2);
+        player.coins += half;
+        pot -= half;
+        break;
+      case "Shin":
+        if (player.coins > 0) {
+          player.coins -= 1;
+          pot += 1;
+        }
+        break;
+      case "Nun":
+      default:
+        // nothing happens
+        break;
+    }
+
+    // Move to next turn
+    currentTurnIndex = (currentTurnIndex + 1) % turnOrder.length;
+
+    // Broadcast updated state
+    io.emit('gameState', { players, pot, currentTurn: turnOrder[currentTurnIndex], lastSpin: { player: player.name, result } });
   });
 
-  // Handle disconnect
+  // Disconnect
   socket.on('disconnect', () => {
     delete players[userId];
-    io.emit('playersUpdate', Object.values(players));
+    turnOrder = turnOrder.filter(id => id !== userId);
+    if (currentTurnIndex >= turnOrder.length) currentTurnIndex = 0;
+    io.emit('gameState', { players, pot, currentTurn: turnOrder[currentTurnIndex] });
   });
 });
-
-server.listen(port, () => {
-  console.log(`Dreidel game running at http://localhost:${port}`);
-});
-

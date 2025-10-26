@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dreidel Game</title>
+  <style>
+    body { font-family:sans-serif; text-align:center; margin:10px; }
+    button { padding:12px 20px; font-size:16px; margin:4px; }
+    input { font-size:16px; padding:4px; margin:4px; }
+  </style>
+</head>
+<body>
+<h1>🎉 Dreidel Game</h1>
+
+<div id="userBanner">
+  <span id="userName"></span>
+  <button id="signInBtn">Sign in / Sign up</button>
+  <button id="logoutBtn">Logout</button>
+</div>
+
+<div>
+  <label>Session ID: <input type="text" id="sessionInput"></label>
+  <button id="joinGameBtn">Join Game</button>
+</div>
+
+<div>
+  <label>Number of bots: <input type="number" id="botCount" min="0" max="3" value="1"></label>
+  <button id="startGameBtn">Start Game</button>
+</div>
+
+<div id="gameArea" style="display:none;">
+  <p id="currentTurn"></p>
+  <button id="spinBtn">Spin Dreidel</button>
+  <ul id="playerList"></ul>
+</div>
+
+<script>
+let currentUser = null;
+let currentUserId = null;
+let sessionId = null;
+let gameData = null;
+
+async function getUser(){
+  try{
+    const res = await fetch('/api/me');
+    if(!res.ok) throw new Error('Not logged in');
+    currentUser = await res.json();
+    currentUserId = currentUser.id;
+    document.getElementById('userName').textContent = `Hello, ${currentUser.name}`;
+    document.getElementById('signInBtn').style.display='none';
+    document.getElementById('logoutBtn').style.display='inline-block';
+  } catch(e){
+    document.getElementById('userName').textContent='';
+    document.getElementById('signInBtn').style.display='inline-block';
+    document.getElementById('logoutBtn').style.display='none';
+  }
+}
+getUser();
+
+document.getElementById('signInBtn').addEventListener('click', ()=>window.location.href='/auth/workos');
+document.getElementById('logoutBtn').addEventListener('click', ()=>window.location.href='/logout');
+
+document.getElementById('startGameBtn').addEventListener('click', async ()=>{
+  if(!currentUserId) return alert('Sign in first!');
+  const bots = parseInt(document.getElementById('botCount').value||'0');
+  const res = await fetch('/api/game/start',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({playerIds:[currentUserId], bots})
+  });
+  gameData = await res.json();
+  sessionId = gameData.sessionId;
+  document.getElementById('gameArea').style.display='block';
+  updateGameUI();
+  pollGameState();
+});
+
+document.getElementById('joinGameBtn').addEventListener('click', async ()=>{
+  if(!currentUserId) return alert('Sign in first!');
+  const session = document.getElementById('sessionInput').value.trim();
+  if(!session) return alert('Enter session ID');
+  const res = await fetch('/api/game/join',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ sessionId: session })
+  });
+  gameData = await res.json();
+  sessionId = session;
+  document.getElementById('gameArea').style.display='block';
+  updateGameUI();
+  pollGameState();
+});
+
+document.getElementById('spinBtn').addEventListener('click', async ()=>{
+  const player = gameData.players[gameData.turnIndex];
+  if(player.id !== currentUserId) return alert('Not your turn!');
+  await spinDreidel();
+});
+
+async function spinDreidel(){
+  const res = await fetch(`/api/game/${sessionId}/spin`, { method:'POST' });
+  const data = await res.json();
+  alert(`${data.player} spun ${data.result}!`);
+  await fetchGameState();
+}
+
+async function fetchGameState(){
+  const res = await fetch(`/api/game/${sessionId}`);
+  gameData = await res.json();
+  updateGameUI();
+  const nextPlayer = gameData.players[gameData.turnIndex];
+  if(nextPlayer.isBot) setTimeout(spinDreidel,1000);
+}
+
+function updateGameUI(){
+  document.getElementById('currentTurn').textContent = `Current turn: ${gameData.players[gameData.turnIndex].name}`;
+  const ul = document.getElementById('playerList');
+  ul.innerHTML = '';
+  gameData.players.forEach(p=>{
+    const li = document.createElement('li');
+    li.textContent = `${p.name} - Coins: ${p.coins}, Wins: ${p.wins}`;
+    ul.appendChild(li);
+  });
+}
+
+// Poll every 2 seconds
+function pollGameState(){
+  setInterval(async ()=>{
+    if(sessionId){
+      await fetchGameState();
+    }
+  },2000);
+}
+</script>
+</body>
+</html>

@@ -34,7 +34,7 @@ app.get('/login', async (req, res) => {
   try {
     const authorizationUrl = await workos.sso.getAuthorizationURL({
       clientId: process.env.WORKOS_CLIENT_ID,
-      redirectUri: 'https://your-render-app.onrender.com/auth/callback',
+      redirectUri: 'https://dreidel.onrender.com/auth/callback',
       connection: process.env.WORKOS_CONNECTION_ID,
     });
     res.redirect(authorizationUrl);
@@ -110,3 +110,4 @@ io.on('connection', (socket) => {
 server.listen(port, () => {
   console.log(`Dreidel game running at http://localhost:${port}`);
 });
+
